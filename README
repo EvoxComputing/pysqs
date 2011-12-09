@@ -1,0 +1,7 @@
+Python Amazon Simple Queue Service
+
+API version support: 2011-10-01
+
+Supported Actions
+CreateQueue
+ListQueues
