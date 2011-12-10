@@ -8,6 +8,10 @@ import sys
 import httplib2
 import urlparse
 import urllib
+import time
+import base64
+import hmac
+import hashlib
 
 class SQSError(Exception): pass
 
@@ -54,8 +58,8 @@ class SignatureMethod(object):
         sig = '\n'.join((
             request.get_normalized_http_method(),
             request.get_normalized_http_host(),
-            request.get_normalized_http_path(),
-            request.get_normalized_parameters(),
+            ##request.get_normalized_http_path(),
+            ##request.get_normalized_parameters(),
         ))
         return sig
 
@@ -80,12 +84,14 @@ class SignatureMethod_HMAC_SHA1(SignatureMethod):
 class SignatureMethod_HMAC_SHA256(SignatureMethod):
     name = 'HmacSHA256'
     version = '2'
-
+	
     def build_signature(self, request, aws_secret):
-        import hashlib
-        base = self.build_signature_base_string(request)
-        hashed = hmac.new(aws_secret, base, hashlib.sha256)
-        return base64.b64encode(hashed.digest())
+		print "Doing SHA256 ..."
+		base = self.build_signature_base_string(request)
+		
+		hashed = hmac.new(aws_secret, base, hashlib.sha256)
+		print  base64.b64encode(hashed.digest())
+		return base64.b64encode(hashed.digest())
 		
 ##AWS request
 # 1. Sort the parameters of the query in natural byte order
@@ -94,11 +100,12 @@ class SignatureMethod_HMAC_SHA256(SignatureMethod):
 # 4. Convert to base64
 
 class awsrequest:
-	def __init__(self,region,method,uri,parms):
+	def __init__(self,region,method,url,parms={}):
 		
 		self.method=method
-		self.parms=parms or {}
+		self.parms={}
 		self.region=region
+		self.url=url
 		
 			
 	def set_parameter(self, name, value):
@@ -111,8 +118,7 @@ class awsrequest:
 			raise SQSError('Parameter not found: %s' % parameter)
 
 	def get_normalized_parameters(self):
-
-		return urlencode([(_utf8_str(k), _utf8_str(v)) for k, v in sorted(self.parms.iteritems()) if k != 'Signature'])
+		return 1
 
 	def get_normalized_http_method(self):
 		return self.method.upper()
@@ -125,6 +131,7 @@ class awsrequest:
 		return parts[1].lower()
 
 	def sign_request(self, signature_method, aws_key, aws_secret):
+		
 		self.set_parameter('AWSAccessKeyId', aws_key)
 		self.set_parameter('SignatureVersion', signature_method.version)
 		self.set_parameter('SignatureMethod', signature_method.name)
@@ -153,9 +160,9 @@ class sqs:
 		
 		try:
 			import hashlib # 2.5+
-			signature_method = SignatureMethod_HMAC_SHA256
+			self.signature_method = SignatureMethod_HMAC_SHA256()
 		except ImportError:
-			signature_method = SignatureMethod_HMAC_SHA1
+			self.signature_method = SignatureMethod_HMAC_SHA1()
 		
 		
 		
@@ -244,6 +251,7 @@ class sqs:
 		self.uri    = scheme+"://"+region+"."+WS_URI
 		self.host   = region+"."+WS_URI
 		self.scheme = scheme
+	
 		
 		
 	def _make_request(self,request):
@@ -254,19 +262,19 @@ class sqs:
 		request.set_parameter("SignatureMethod",self.signatureMethod)
 		request.set_parameter("SignatureVersion",self.signatureVersion)
 		
-		request.sign_request(self.signature_method(), self.aWSAccessKeyId, self.aWSSecretKey)
+		request.sign_request(self.signature_method, self.aWSAccessKeyId, self.aWSSecretKey)
         #response, content = self.http.request(request.url, request.method, headers=headers, body=request.to_postdata())
 	
 	
 	def list_queues(self,region,method,ssl,prefix):		
 		## Retrieve queues
 		print "Retrieving queues"		
-		self.uri=self.prepare_qdstinfo(region,ssl)
+		self.prepare_qdstinfo(region,ssl)
 				
 		## Request parms
 		parms ={
 			'Action': 'ListQueues',
-			'QueueNamePrefix': prefix
+			'QueueNamePrefix': 'xx'
 		}
 		
 		
