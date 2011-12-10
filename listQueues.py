@@ -5,16 +5,21 @@
 
 ##### Main program 
 
-import lib.pysqs,sys
-
-queues=[]
+import lib.pysqs,sys,time
 
 try:
 	sqs=lib.pysqs.sqs()
-	sqs.loadconfig("/root/dev/pysqs/config/aws.conf")
-	sqs.testnet()
-	sqs.loadregions()
-	sqs.listqueues()
+	## Loads AWS credentials from config file
+	sqs.loadconfig("/home/dlam/working/devel/pysqs/config/aws.conf")
+	## Tests connectivity to amazon
+	#sqs.testnet()
+	## Tests connectivity to all regions
+	#sqs.testregions()
+	
+	
+	sqs.list_queues("sqs.eu-west-1","GET",1,"")
 
 except:
 	print "Error::listQueues::ExceptionOccured"
+	print "Exception::", sys.exc_info()[0]
+	print "Exception::", sys.exc_info()[1]

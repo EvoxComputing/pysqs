@@ -5,3 +5,16 @@ API version support: 2011-10-01
 Supported Actions
 CreateQueue
 ListQueues
+
+
+Prerequisites
+-------
+Get your AWS identifiers
+Access Key ID (a 20-character, alphanumeric sequence)
+For example: 022QF06E7MXBSH9DHM02
+
+Secret Access Key (a 40-character sequence)
+For example: kWcrlUX5JEDGM/LtmEENI/aVmYvHNif5zB+d9+ct
+
+
+Change the config path in listQueues
