@@ -13,6 +13,7 @@ import time
 import base64
 import hmac
 import hashlib
+from xml.dom.minidom import parse, parseString
 
 class SQSError(Exception): pass
 
@@ -50,13 +51,14 @@ class SignatureMethod(object):
         raise NotImplementedError
 
     def build_signature_base_string(self, request):
-        sig = '\n'.join((
-            request.get_normalized_http_method(),
-            request.get_normalized_http_host(),
-            request.get_normalized_http_path(),
-            request.get_normalized_parameters()
-        ))
-        return sig
+		sig = '\n'.join((
+			request.get_normalized_http_method(),
+			request.get_normalized_http_host(),
+			request.get_normalized_http_path(),
+			request.get_normalized_parameters()
+		))
+		
+		return sig
 
     def build_signature(self, request, aws_secret):
         raise NotImplementedError
@@ -68,11 +70,8 @@ class SignatureMethod_HMAC_SHA256(SignatureMethod):
     version = '2'
 	
     def build_signature(self, request, aws_secret):
-		print "Doing SHA256 ..."
 		base = self.build_signature_base_string(request)
-		print "\n\nBASE %s" % (base)
 		hashed = hmac.new(aws_secret, base, hashlib.sha256)
-		
 		return base64.b64encode(hashed.digest())
 		
 ##AWS request
@@ -106,7 +105,8 @@ class awsrequest:
 		
 	def get_normalized_http_method(self):
 		return self.method.upper()
-	
+
+
 	def get_normalized_http_path(self):
 		parts = urlparse.urlparse(self.url)
 		if not parts[2]:
@@ -144,10 +144,13 @@ class sqs:
 		self.uri=""  
 		self.host=""
 		self.scheme=""
+		self.path=""
 		self.version="2011-10-01"
 		self.signatureMethod="HmacSHA256"
 		self.signatureVersion="2"
 		self.http = httplib2.Http()
+		
+		self.queues=[]
 		
 		try:
 			import hashlib # 2.5+
@@ -220,12 +223,13 @@ class sqs:
 				if len(n) != 2:
 					print "Error::loadconfig:No valid mappings found"
 					raise Exception('No valid mappings found')
-				print n[0],n[1]
+				#print n[0],n[1]
 				if n[0] == "AWS_ACCESS_KEY_ID":
 					self.aWSAccessKeyId=n[1]
 				if n[0] == "AWS_SECRET_ACCESS_KEY":
 					self.aWSSecretKey=n[1]
-				
+			
+			
 		except:
 			print "Error::loadconfig:Reading file", sys.exc_info()[0]
 			raise Exception()
@@ -237,8 +241,10 @@ class sqs:
 		if ssl == 0:
 			scheme="http"
 		
-		
-		self.uri    = scheme+"://"+region+"."+WS_URI
+		if self.path == "":
+			self.uri    = scheme+"://"+region+"."+WS_URI
+		else:
+			self.uri    = scheme+"://"+region+"."+WS_URI+"/"+self.path
 		self.host   = region+"."+WS_URI
 		self.scheme = scheme
 	
@@ -255,13 +261,30 @@ class sqs:
 		
 		request.sign_request(self.signature_method, self.aWSAccessKeyId, self.aWSSecretKey)
 		response, content = self.http.request(request.url, request.method, headers=headers, body=request.to_postdata())
-		print content
 		
+		#print content
+		dom = parseString(content)
+		if dom.getElementsByTagName("Error"):
+			raise SQSError(self.showawserror(dom))
+		
+		if dom.getElementsByTagName("ListQueuesResult"):
+			self.savequeues(dom)
+			
+				
+			
+	def savequeues(self,dom):
+		for name in dom.getElementsByTagName("QueueUrl"):
+			parts=urlparse.urlparse(name.toxml().replace('<QueueUrl>','').replace('</QueueUrl>',''))
+			self.queues.append(parts[2].split("/")[2])
+			
+			
+
+	def showawserror(self,dom):
+		return dom.getElementsByTagName("Message")[0].toxml().replace('<Message>','').replace('</Message>','')
 		
 	
 	def list_queues(self,region,method,ssl,prefix):		
-		## Retrieve queues
-		print "Retrieving queues"		
+				
 		self.prepare_qdstinfo(region,ssl)
 				
 		## Request parms
@@ -274,8 +297,34 @@ class sqs:
 		request=awsrequest(region,method,self.uri,parms)
 		self._make_request(request)
 
-	
+	def create_queue(self,region,method,ssl,name):		
+				
+		self.prepare_qdstinfo(region,ssl)
+				
+		## Request parms
+		parms ={
+			'Action': 'CreateQueue',
+			'QueueName': name
+		}
+		
+		
+		request=awsrequest(region,method,self.uri,parms)
+		self._make_request(request)	
 
+	def send_msg(self,region,method,ssl,message,queuename):		
+				
+		self.path=queuename		
+		self.prepare_qdstinfo(region,ssl)
+				
+		## Request parms
+		parms ={
+			'Action': 'SendMessage',
+			'MessageBody': message
+		}
+		
+		
+		request=awsrequest(region,method,self.uri,parms)
+		self._make_request(request)	
 
 
 
