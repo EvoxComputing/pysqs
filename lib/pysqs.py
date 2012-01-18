@@ -14,6 +14,7 @@ import base64
 import hmac
 import hashlib
 from xml.dom.minidom import parse, parseString
+from Crypto.Cipher import AES
 
 class SQSError(Exception): pass
 
@@ -56,7 +57,9 @@ class SignatureMethod(object):
 			request.get_normalized_http_host(),
 			request.get_normalized_http_path(),
 			request.get_normalized_parameters()
+			
 		))
+		
 		
 		return sig
 
@@ -128,8 +131,81 @@ class awsrequest:
 		self.set_parameter('SignatureMethod', signature_method.name)
 		self.set_parameter('Timestamp', generate_timestamp())
 		self.set_parameter('Signature', signature_method.build_signature(self, aws_secret))
-
-class sqs:
+		
+		
+class AWSmessage:
+	rec=0
+	messageid=""
+	receipthandle=""
+	md5=""
+	body=""
+	requestid=""
+	
+	base64_decode=1
+	
+	aws_messages=[]
+	
+	def parse_response(self,dom):
+		
+		message_num = 0
+		handle_num  = 0
+		md_num      = 0
+		body_num    = 0
+		
+		message_id_list  = []
+		handle_list      = []
+		md5_hash_list    = []
+		msg_body_list    = []
+		
+		#Retrieve message IDs
+		for name in dom.getElementsByTagName("MessageId"):
+			msgid=name.toxml().replace('<MessageId>','').replace('</MessageId>','')
+			message_id_list.insert(message_num,msgid)
+			message_num+=1
+			
+		#Retrieve message Handles
+		for name in dom.getElementsByTagName("ReceiptHandle"):
+			handle=name.toxml().replace('<ReceiptHandle>','').replace('</ReceiptHandle>','')
+			handle_list.insert(handle_num,handle)
+			handle_num+=1
+		
+		#Retrieve message md5s
+		for name in dom.getElementsByTagName("MD5OfBody"):
+			md5=name.toxml().replace('<MD5OfBody>','').replace('</MD5OfBody>','')
+			md5_hash_list.insert(md_num,md5)
+			md_num+=1	
+		
+		#Retrieve message md5s
+		for name in dom.getElementsByTagName("Body"):
+			body=name.toxml().replace('<Body>','').replace('</Body>','')
+			msg_body_list.insert(body_num,body)
+			body_num+=1	
+		
+		for i in range(0,body_num):
+			sqs_message=AWSmessage()
+			sqs_message.rec=i
+			sqs_message.messageid=message_id_list[i]
+			sqs_message.receipthandle=handle_list[i]
+			sqs_message.md5=md5_hash_list[i]
+			
+			try:
+				if self.base64_decode == 1:
+					sqs_message.body=base64.b64decode(msg_body_list[i])
+				else:
+					sqs_message.body=msg_body_list[i]
+			except:
+				sqs_message.body=msg_body_list[i]
+				
+			self.aws_messages.append(sqs_message)
+			
+			#print "Msg id %s" % (message_id_list[i])
+			#print "Handle %s" % (handle_list[i])
+			#print "MD5 %s " % (md5_hash_list[i])
+			#print "Body %s" % (msg_body_list[i])
+		
+			
+	
+class SQS:
 	
 	def __init__(self,action="null",queueNamePrefix="null",expires="",aWSAccessKeyId="",aWSSecretKey="",signature="",config=""):
 	
@@ -138,8 +214,12 @@ class sqs:
 		self.expires=expires
 		self.aWSAccessKeyId=aWSAccessKeyId
 		self.aWSSecretKey=aWSSecretKey
+		self.AESKey=""
 		self.signature=signature
 		self.config=config
+		
+		self.encryptionsupport = 1
+		self.encrypt_flag = 0
 		  
 		self.uri=""  
 		self.host=""
@@ -149,8 +229,14 @@ class sqs:
 		self.signatureMethod="HmacSHA256"
 		self.signatureVersion="2"
 		self.http = httplib2.Http()
+		self.MAX_MSG_SIZE=1024*64
 		
 		self.queues=[]
+		self.queue_url=""
+		self.queue_attributes={}
+		self.responsemessage=""
+		self.messageid=""
+		self.awsmsg=""
 		
 		try:
 			import hashlib # 2.5+
@@ -220,14 +306,16 @@ class sqs:
 				entry=line.strip()
 				n=entry.split(splitchar)
 				
-				if len(n) != 2:
+				if len(n) < 2:
 					print "Error::loadconfig:No valid mappings found"
 					raise Exception('No valid mappings found')
-				#print n[0],n[1]
+				
 				if n[0] == "AWS_ACCESS_KEY_ID":
 					self.aWSAccessKeyId=n[1]
 				if n[0] == "AWS_SECRET_ACCESS_KEY":
 					self.aWSSecretKey=n[1]
+				if n[0] == "AES_KEY":
+					self.AESKey=n[1]	
 			
 			
 		except:
@@ -255,7 +343,7 @@ class sqs:
                    'host': self.host}
 				   
 		## Set common query parameters	
-		print "Connecting to host %s" % (self.host)
+		#print "Connecting to host %s" % (self.host)
 		
 		request.set_parameter("Version",self.version)
 		
@@ -265,20 +353,109 @@ class sqs:
 		#print content
 		dom = parseString(content)
 		if dom.getElementsByTagName("Error"):
+			self.responsemessage="AWS Error"
 			raise SQSError(self.showawserror(dom))
 		
 		if dom.getElementsByTagName("ListQueuesResult"):
 			self.savequeues(dom)
+			self.set_responsemsg("Queue list succesfully retrieved")
+		
+		if dom.getElementsByTagName("CreateQueueResult"):
+			self.set_responsemsg("Create queue command succesfully executed")
 			
-				
+		if dom.getElementsByTagName("GetQueueUrlResult"):
+			self.set_responsemsg("URL Id retrieved succesfully")
+			self.set_queue_url(dom)	
+
+		if dom.getElementsByTagName("DeleteQueueResponse"):
+			self.set_responsemsg("Queue deleted succesfully")
+
+		if dom.getElementsByTagName("GetQueueAttributesResult"):
+			self.set_responsemsg("Attributes retrieved succesfully")
+			self.set_queue_attributes(dom)
+		
+		if dom.getElementsByTagName("SendMessageResult"):
+			self.set_responsemsg("Message sent succesfully")	
+			self.set_msgid(dom)
+
+		if dom.getElementsByTagName("ReceiveMessageResult"):
+			self.set_responsemsg("Message received succesfully")	
+			self.set_msgs(dom)			
+
+
+								
+			
+	def set_responsemsg(self,msg):
+		self.responsemessage=msg
+		
+		
+	def get_responsemsg(self):
+		return self.responsemessage
+
+	def set_msgid(self,dom):
+		for name in dom.getElementsByTagName("MessageId"):
+			self.messageid=name.toxml().replace('<MessageId>','').replace('</MessageId>','')
+			
+	def get_msgid(self):
+		return self.messageid
 			
 	def savequeues(self,dom):
 		for name in dom.getElementsByTagName("QueueUrl"):
 			parts=urlparse.urlparse(name.toxml().replace('<QueueUrl>','').replace('</QueueUrl>',''))
 			self.queues.append(parts[2].split("/")[2])
-			
-			
 
+	def set_queue_url(self,dom):
+		for name in dom.getElementsByTagName("QueueUrl"):
+			self.queue_url=name.toxml().replace('<QueueUrl>','').replace('</QueueUrl>','')
+			
+	def get_queue_url(self):		
+		return self.queue_url
+
+	def set_queue_attributes(self,dom):
+		self.queue_attributes={}
+		attribute_names=[]
+		att_n=0
+		
+		for name in dom.getElementsByTagName("Name"):
+			att_name=name.toxml().replace('<Name>','').replace('</Name>','')
+			attribute_names.insert(att_n,att_name)
+			att_n+=1
+		
+		val_n=0
+		for value in dom.getElementsByTagName("Value"):
+			att_value=value.toxml().replace('<Value>','').replace('</Value>','')
+			self.queue_attributes[attribute_names[val_n]] = att_value
+			val_n+=1
+
+	def set_msgs(self,dom):
+		self.awsmsg=AWSmessage()
+		self.awsmsg.parse_response(dom)
+
+	def get_msgs(self):
+		if self.encryptionsupport == 1:
+			## Check if we have AES support
+			try:
+				from Crypto.Cipher import AES
+				self.encrypt_flag=1
+			except:
+				pass
+		if self.encrypt_flag == 1:
+			obj = AES.new(self.AESKey, AES.MODE_ECB)
+			#Decrypt message body
+			aws_msg=AWSmessage()
+			
+			for message in aws_msg.aws_messages:
+				#print "Message body: %s " % (message.body)
+				plaintext= obj.decrypt(message.body)
+				aws_msg.aws_messages[message.rec].body =plaintext
+			
+			
+		return self.awsmsg
+		
+		
+	def get_queue_attributes(self):
+		return self.queue_attributes
+	
 	def showawserror(self,dom):
 		return dom.getElementsByTagName("Message")[0].toxml().replace('<Message>','').replace('</Message>','')
 		
@@ -311,15 +488,87 @@ class sqs:
 		request=awsrequest(region,method,self.uri,parms)
 		self._make_request(request)	
 
-	def send_msg(self,region,method,ssl,message,queuename):		
-				
-		self.path=queuename		
+	def delete_queue(self,region,method,ssl,queuename):		
+		self.path=queuename				
 		self.prepare_qdstinfo(region,ssl)
 				
 		## Request parms
 		parms ={
+			'Action': 'DeleteQueue'
+			
+		}
+		
+		
+		request=awsrequest(region,method,self.uri,parms)
+		self._make_request(request)			
+		
+	def queueurl(self,region,method,ssl,name):	
+		
+		self.prepare_qdstinfo(region,ssl)
+				
+		## Request parms
+		parms ={
+			'Action': 'GetQueueUrl',
+			'QueueName': name
+		}
+		
+		
+		request=awsrequest(region,method,self.uri,parms)
+		self._make_request(request)	
+
+	def get_queueattr(self,region,method,ssl,queuename,attributes):
+		self.path=queuename	
+		self.prepare_qdstinfo(region,ssl)
+		
+		x=1
+		parms={}
+		for att in attributes:
+			att_name = "AttributeName."+str(x)
+			parms[att_name] = att
+			x+=1
+		
+		## Request parms
+		parms['Action'] = 'GetQueueAttributes'
+		
+		request=awsrequest(region,method,self.uri,parms)
+		self._make_request(request)
+			
+	def send_msg(self,region,method,ssl,message,queuename):		
+		
+		if self.encryptionsupport == 1:
+			## Check if we have AES support
+			try:
+				from Crypto.Cipher import AES
+				self.encrypt_flag=1
+			except:
+				pass
+		if self.encrypt_flag == 1:
+			obj = AES.new(self.AESKey, AES.MODE_ECB)
+			#Encrypt
+			message = obj.encrypt(message)
+		
+			
+		
+		self.path=queuename		
+		self.prepare_qdstinfo(region,ssl)
+		
+		#Convert message to base64 here. URL encoding of spaces in message body 
+		# is not accepted by aws for some reason (based on this implementation)
+		# We convert all messages to base64
+		
+		message_norm=base64.b64encode(message)
+		
+		
+			
+		#Max allowd size
+		if sys.getsizeof(message_norm) > self.MAX_MSG_SIZE:
+			raise SQSError("Message maximum size limit exceeded")
+		
+		## Request parms
+		## Message gets normalized later
+		parms ={
 			'Action': 'SendMessage',
-			'MessageBody': message
+			'MessageBody': message_norm
 		}
 		
 		
@@ -327,4 +576,42 @@ class sqs:
 		self._make_request(request)	
 
 
+	def receive_msg(self,region,method,ssl,queuename,max,vis_timeout,attributes):		
+				
+		self.path=queuename		
+		self.prepare_qdstinfo(region,ssl)
+		
+		if vis_timeout == "":
+			vis_timeout = 30
+		if attributes == "":
+			attributes = "All"
+			
+		## Request parms
+		parms ={
+			'Action': 'ReceiveMessage',
+			'MaxNumberOfMessages': max,
+			'VisibilityTimeout': vis_timeout,
+			'AttributeName': attributes
+			
+		}
+		
+		
+		request=awsrequest(region,method,self.uri,parms)
+		self._make_request(request)	
 
+	def delete_msg(self,region,method,ssl,queuename,handle):		
+				
+		self.path=queuename		
+		self.prepare_qdstinfo(region,ssl)
+		
+		## Request parms
+		parms ={
+			'Action': 'DeleteMessage',
+			'ReceiptHandle': handle
+						
+		}
+		
+		
+		request=awsrequest(region,method,self.uri,parms)
+		self._make_request(request)	
+		

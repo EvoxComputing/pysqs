@@ -1,6 +1,6 @@
 #!/usr/bin/python -u
 #
-# Sends a message to a queue
+# Receives a message from a queue
 #
 
 ##### Main program 
@@ -26,15 +26,37 @@ try:
 	#1 is SSL ON and 0 is SSL OFF
 	ssl_flag=0 
 	# Message
-	message="My First Message"
+	message="My Second Message"
 	# Queue name
 	queue_name="myqueue1"
+	#Max Number of msgs
+	max=2
+	#Visibility timeout
+	vis_timeout=""
+	# Attributes to return
+	attributes=[]
+	all_attributes=["All"]
 	
 	# Make the AWS call
-	sqs.send_msg(region,method,ssl_flag,message,queue_name)
+	sqs.receive_msg(region,method,ssl_flag,queue_name,max,vis_timeout,all_attributes)
 	
 	print "Result: %s " % (sqs.get_responsemsg())
-	print "Message ID: %s " % (sqs.get_msgid())
+	
+	aws_msg=lib.pysqs.AWSmessage()
+	
+	aws_msg = sqs.get_msgs()
+	
+	print "Received: %d messages" % (len(aws_msg.aws_messages))
+	
+	for message in aws_msg.aws_messages:
+		print "Message body: %s " % (message.body)
+		
+	## delete the retrieved messages
+	
+	#for message in aws_msg.aws_messages:
+	#	sqs.delete_msg(region,method,ssl_flag,queue_name,message.receipthandle) 
+	
+	
 	
 
 except:
