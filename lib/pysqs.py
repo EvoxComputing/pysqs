@@ -339,7 +339,7 @@ class SQS:
 		
 		
 	def _make_request(self,request):
-		headers = {'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+		headers = {'Connection:': 'Keep-alive','Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
                    'host': self.host}
 				   
 		## Set common query parameters	
